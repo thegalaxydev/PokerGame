@@ -1,0 +1,10 @@
+# Project place file
+/Poker.rbxlx
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+.vscode/
+wally.lock
+Packages/
