@@ -8,3 +8,5 @@
 .vscode/
 wally.lock
 Packages/
+
+sourcemap.json

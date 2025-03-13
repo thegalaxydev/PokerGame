@@ -1,4 +1,6 @@
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Types = require(ReplicatedStorage.Shared.Types)
 
 type Remote<T...> = {
 	Name: string,
@@ -30,6 +32,8 @@ end
 
 local t = {
 	SendAction = Remote("SendAction") :: Remote<string, any?>,
+	ReplicateGameData = Remote("ReplicateGameData") :: Remote<Types.PokerGame>,
+	GameEvent = Remote("GameEvent") :: Remote<string, any?>,
 }
 
 
