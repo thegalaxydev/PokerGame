@@ -1,6 +1,6 @@
 --!strict
 
-game:GetService("StarterGui"):ClearAllChildren()
+--game:GetService("StarterGui"):ClearAllChildren()
 
 for i,v in pairs(script:GetDescendants()) do
     if not v:IsA("ModuleScript") then continue end

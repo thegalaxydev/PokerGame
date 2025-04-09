@@ -37,8 +37,10 @@ function Deck:Shuffle()
 		return
 	end
 
+	print(self.Cards)
+
 	for i = #self.Cards, 2, -1 do
-		local j = self.Random:NextNumber(1, i)
+		local j = self.Random:NextInteger(1, i)
 		self.Cards[i], self.Cards[j] = self.Cards[j], self.Cards[i]
 	end
 end
@@ -52,15 +54,7 @@ function Deck:Draw()
 end
 
 
-function Poker.CreatePlayers(players: {Player}, startingChips: number) : {PokerPlayer}
-	local pPlayers = {}
 
-	for _, player in players do
-		table.insert(pPlayers, {Player = player, Chips = startingChips, Hand = {}, State = "Active", Bet = 0})
-	end
-
-	return pPlayers
-end
 
 function Poker.GetValueForHand(hand: {Card}) : (number, string)
 	table.sort(hand, function(a,b)
@@ -146,9 +140,43 @@ function Poker.GetValueForHand(hand: {Card}) : (number, string)
 end
 
 function Poker:Replicate()
+	print(self.Players)
 	for _, player in self.Players do
-		Remotes.ReplicateGameData:FireClient(player, self)
+		if player.IsFake then continue end
+		Remotes.ReplicateGameData:FireClient(player.Player, self)
 	end
+end
+
+function Poker.CreateFakePlayer()
+	return {
+		Name = "Player_" .. HttpService:GenerateGUID(false),
+	}
+end
+
+function Poker.CreatePlayers(players: {Player}, startingChips: number) : {PokerPlayer}
+	local pPlayers = {}
+
+	for _, player in players do
+		table.insert(pPlayers, {Player = player, Chips = startingChips, Hand = {}, State = "Active", Bet = 0})
+	end
+
+	if #pPlayers == 1 then
+		table.insert(pPlayers, {Player = Poker.CreateFakePlayer(), Chips = startingChips, Hand = {}, State = "Active", Bet = 0, IsFake = true})
+	end
+
+	return pPlayers
+end
+
+function Poker:Init()
+	Remotes.SendAction.OnServerEvent:Connect(function(player, action, ...)
+		if action == "Start" then
+			Poker.CreateGame({
+				Players = game:GetService("Players"):GetPlayers(),
+				StartingChips = 1000,
+				Ante = 10,
+			}):Start()
+		end
+	end)
 end
 
 function Poker.CreateGame(settings: PokerGameSettings) : PokerGame
@@ -180,6 +208,8 @@ function Poker:Start()
 		return
 	end
 
+	print("GAME STARTING WITH PLAYERS: ", #self.Players)
+
 	self.Deck:Shuffle()
 	self.Table = {}
 	self.Pot = 0
@@ -189,13 +219,100 @@ function Poker:Start()
 	if #self.Players < 3 then
 		self.BigBlindPlayer = self.Players[1]
 		self.SmallBlindPlayer = self.Players[2]
-
 	else
 		self.BigBlindPlayer = self.Players[2]
 		self.SmallBlindPlayer = self.Players[3]
 	end
 
 	self.GameStarted = true
+
+	self:PreFlop()
+end
+
+function Poker:PreFlop()
+	self = self :: PokerGame
+	if not self.GameStarted then
+		warn("Game not started")
+		return
+	end
+
+	self.Round = "Pre-Flop"
+
+	self.BigBlindPlayer.Chips -= self.Ante
+	self.SmallBlindPlayer.Chips -= math.round(self.Ante / 2)
+	self.Pot += self.Ante
+
+	self:GameEvent("PreFlopStart")
+
+	self:GetPlayerDecisions()
+	self:Flop()
+end
+
+function Poker:Flop()
+	local self = self :: PokerGame
+	if not self.GameStarted then
+		warn("Game not started")
+		return
+	end
+
+	for i = 1, 3 do
+		table.insert(self.Table, self.Deck:Draw())
+	end
+
+	self.Round = "Flop"
+
+	self:GameEvent("Flop", self.Table)
+	self:GetPlayerDecisions()
+	self:Turn()
+end
+
+function Poker:Turn()
+	if not self.GameStarted then
+		warn("Game not started")
+		return
+	end
+
+	self.Round = "Turn"
+
+	table.insert(self.Table, self.Deck:Draw())
+	self:GameEvent("Turn", self.Table)
+	self:GetPlayerDecisions()
+	self:River()
+end
+
+function Poker:River()
+	local self = self :: PokerGame
+	if not self.GameStarted then
+		warn("Game not started")
+		return
+	end
+
+	self.Round = "River"
+
+	table.insert(self.Table, self.Deck:Draw())
+	self:GameEvent("River", self.Table)
+	self:GetPlayerDecisions()
+	self:Showdown()
+end
+
+function Poker:Showdown()
+	local self = self :: PokerGame
+	if not self.GameStarted then
+		warn("Game not started")
+		return
+	end
+
+	self.Round = "Showdown"
+
+	self:GameEvent("Showdown")
+end
+
+function Poker:End()
+	local self = self :: PokerGame
+
+	self.Round = "End"
+
+	self:GameEvent("End")
 end
 
 function Poker:GetNextPlayer()
@@ -336,6 +453,7 @@ function Poker:GameEvent(event: string, ...)
 	self:Replicate()
 
 	for _, player in self.Players do
+		if player.IsFake then continue end
 		Remotes.GameEvent:FireClient(player.Player, event, ...)
 	end
 end
@@ -348,7 +466,12 @@ function Poker:RemovePlayer(player: Player)
 		return
 	end
 
-	table.remove(self.Players, pPlayer)
+	local index = table.find(self.Players, pPlayer)
+	if not index then
+		return
+	end
+
+	table.remove(self.Players, index)
 end
 
 function Poker:GetPlayer(player: Player)
@@ -388,6 +511,9 @@ function Poker:GetPlayerDecisions()
 	end)
 
 	local function awaitDecision()
+		if self.CurrentPlayer.IsFake then
+			decisions[self.CurrentPlayer] = {Action = "Fold", Args = {}}
+		end
 		repeat task.wait() until decisions[self.CurrentPlayer] or (os.time() - startTime >= timeOut)
 		if not decisions[self.CurrentPlayer] then
 			decisions[self.CurrentPlayer] = {Action = "Fold", Args = {}}
@@ -428,79 +554,7 @@ function Poker:GetPlayerDecisions()
 	return decisions
 end
 
-function Poker:PreFlop()
-	self = self :: PokerGame
-	if not self.GameStarted then
-		warn("Game not started")
-		return
-	end
 
-	self.BigBlindPlayer.Chips -= self.Ante
-	self.SmallBlindPlayer.Chips -= math.round(self.Ante / 2)
-	self.Pot += self.Ante
 
-	Poker:GameEvent("PreFlopStart")
-
-	self:GetPlayerDecisions()
-	self:Flop()
-end
-
-function Poker:Flop()
-	local self = self :: PokerGame
-	if not self.GameStarted then
-		warn("Game not started")
-		return
-	end
-
-	for i = 1, 3 do
-		table.insert(self.Table, self.Deck:Draw())
-	end
-
-	self:GameEvent("Flop", self.Table)
-	self:GetPlayerDecisions()
-	self:Turn()
-end
-
-function Poker:Turn()
-	local self = self :: PokerGame
-	if not self.GameStarted then
-		warn("Game not started")
-		return
-	end
-	
-	table.insert(self.Table, self.Deck:Draw())
-	self:GameEvent("Turn", self.Table)
-	self:GetPlayerDecisions()
-	self:River()
-end
-
-function Poker:River()
-	local self = self :: PokerGame
-	if not self.GameStarted then
-		warn("Game not started")
-		return
-	end
-	
-	table.insert(self.Table, self.Deck:Draw())
-	self:GameEvent("River", self.Table)
-	self:GetPlayerDecisions()
-	self:Showdown()
-end
-
-function Poker:Showdown()
-	local self = self :: PokerGame
-	if not self.GameStarted then
-		warn("Game not started")
-		return
-	end
-
-	self:GameEvent("Showdown")
-end
-
-function Poker:End()
-	local self = self :: PokerGame
-	
-	self:GameEvent("End")
-end
 
 return Poker

@@ -15,6 +15,7 @@ export type PokerPlayer = {
 	Hand: {Card},
 	State: "Active" | "Folded" | "All-In" | "Out" | "Called" | "Raised" | "Betting" | "Showdown" | "Checked",
 	Bet: number,
+	IsFake: boolean?,
 }
 
 export type PokerGameSettings = {
