@@ -6,5 +6,7 @@ export type Page = "None" | "Lobby"
 
 return {
     Page = Vide.source("None") :: Vide.source<Page>,
-    TransitionAt = Vide.source(0)
+    TransitionAt = Vide.source(0),
+
+    Lobby = require(script.Lobby)
 }

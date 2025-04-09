@@ -1,3 +1,3 @@
 return {
-    CloseButton = require(script.CloseButton)
+    Button = require(script.Button)
 }

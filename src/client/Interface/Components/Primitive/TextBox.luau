@@ -16,6 +16,7 @@ local Defaults = {
 }
 
 local function TextBox(Props)
+    Props = Props or {}
     for i,v in pairs(Defaults) do
         if Props[i] ~= nil then continue end
 

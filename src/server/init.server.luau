@@ -10,7 +10,8 @@ for i,v in pairs(script:GetDescendants()) do
     end)
 
     if not success then
-        error(`Failure while trying to load module \"({v:GetFullName()})\", \"{result}\"`)
+        warn(`Failure while trying to load module \"({v:GetFullName()})\", \"{result}\"`)
+        continue
     end
 
     if typeof(result) ~= "table" then continue end
