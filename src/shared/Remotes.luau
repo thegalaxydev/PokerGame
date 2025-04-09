@@ -2,6 +2,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Types = require(ReplicatedStorage.Shared.Types)
 local RunService = game:GetService("RunService")
 
+export type PokerGame = Types.PokerGame
+
 export type Event<T> = {
 	Name: string,
 	Parent: Instance,

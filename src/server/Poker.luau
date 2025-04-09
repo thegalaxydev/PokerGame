@@ -37,8 +37,6 @@ function Deck:Shuffle()
 		return
 	end
 
-	print(self.Cards)
-
 	for i = #self.Cards, 2, -1 do
 		local j = self.Random:NextInteger(1, i)
 		self.Cards[i], self.Cards[j] = self.Cards[j], self.Cards[i]
@@ -53,20 +51,43 @@ function Deck:Draw()
 	return table.remove(self.Cards, 1)
 end
 
+Poker.Personalities = {
+	Aggressive = {
+		BluffMultiplier = 1.2,
+		RaiseAggression = 1.5,
+		FoldThreshold = 0.1,
+	},
+	Conservative = {
+		BluffMultiplier = 0.6,
+		RaiseAggression = 0.8,
+		FoldThreshold = 0.25,
+	},
+	Balanced = {
+		BluffMultiplier = 1.0,
+		RaiseAggression = 1.0,
+		FoldThreshold = 0.15,
+	},
+}
 
+function Poker.GetValueForHand(hand: {Card}, tbl: {Card}) : (number, string)
+	local allCards = {}
+	for _, card in hand do
+		table.insert(allCards, card)
+	end
+	for _, card in tbl do
+		table.insert(allCards, card)
+	end
 
-
-function Poker.GetValueForHand(hand: {Card}) : (number, string)
-	table.sort(hand, function(a,b)
+	table.sort(allCards, function(a, b)
 		return a.Rank < b.Rank
 	end)
 
 	local rankCounts = {}
 	local suitCounts = {}
-	local lastSuit = hand[1].Suit
+	local lastSuit = allCards[1].Suit
 
 	local isFlush = true
-	for _, card in hand do
+	for _, card in ipairs(allCards) do
 		rankCounts[card.Rank] = (rankCounts[card.Rank] or 0) + 1
 		suitCounts[card.Suit] = (suitCounts[card.Suit] or 0) + 1
 
@@ -76,20 +97,20 @@ function Poker.GetValueForHand(hand: {Card}) : (number, string)
 	end
 
 	local isStraight = true
-	for i = 2, #hand do
-		if hand[i].Rank ~= hand[i-1].Rank + 1 then
+	for i = 2, #allCards do
+		if allCards[i].Rank ~= allCards[i-1].Rank + 1 then
 			isStraight = false
 			break
 		end
 	end
 
-	if not isStraight and hand[1].Rank == 1 and hand[2].Rank == 10 then
+	if not isStraight and allCards[1].Rank == 1 and allCards[2].Rank == 10 then
 		isStraight = true
 	end
 
 	local pairsCount, threeOfAKindCount, fourOfAKindCount = 0, 0, 0
 
-	for _, count in rankCounts do
+	for _, count in pairs(rankCounts) do
 		if count == 2 then
 			pairsCount += 1
 		elseif count == 3 then
@@ -99,7 +120,7 @@ function Poker.GetValueForHand(hand: {Card}) : (number, string)
 		end
 	end
 
-	if isFlush and isStraight and hand[#hand].Rank == 13 and hand[1].Rank == 1 then
+	if isFlush and isStraight and allCards[#allCards].Rank == 13 and allCards[1].Rank == 1 then
 		return 10, "Royal Flush"
 	end
 
@@ -136,11 +157,9 @@ function Poker.GetValueForHand(hand: {Card}) : (number, string)
 	end
 
 	return 1, "High Card"
-
 end
 
 function Poker:Replicate()
-	print(self.Players)
 	for _, player in self.Players do
 		if player.IsFake then continue end
 		Remotes.ReplicateGameData:FireClient(player.Player, self)
@@ -153,15 +172,38 @@ function Poker.CreateFakePlayer()
 	}
 end
 
+local function getRandomPersonality()
+	local t = {}
+	for personality, _ in Poker.Personalities do
+		table.insert(t, personality)
+	end
+
+	return t[math.random(1, #t)]
+end
+
 function Poker.CreatePlayers(players: {Player}, startingChips: number) : {PokerPlayer}
 	local pPlayers = {}
 
 	for _, player in players do
-		table.insert(pPlayers, {Player = player, Chips = startingChips, Hand = {}, State = "Active", Bet = 0})
+		table.insert(pPlayers, {Player = player, Chips = startingChips, Hand = {}, State = "Active", Bet = 0, IsFake = false, BestHand = ""})
 	end
 
 	if #pPlayers == 1 then
-		table.insert(pPlayers, {Player = Poker.CreateFakePlayer(), Chips = startingChips, Hand = {}, State = "Active", Bet = 0, IsFake = true})
+		table.insert(pPlayers, {
+			Player = Poker.CreateFakePlayer(), 
+			Chips = startingChips, 
+			Hand = {}, 
+			State = "Active", 
+			Bet = 0, 
+			IsFake = true, 
+			BestHand = "",
+			Personality = getRandomPersonality(),
+			Memory = {
+				LastResult = nil,
+				SeenRaises = 0,
+				SeenFolds = 0,
+			}
+		})
 	end
 
 	return pPlayers
@@ -203,6 +245,13 @@ function Poker.CreateGame(settings: PokerGameSettings) : PokerGame
 	return self	
 end
 
+function Poker:UpdateBestHands()
+	for _, player in self.Players do
+		local _, hand = Poker.GetValueForHand(player.Hand, self.Table)
+		player.BestHand = hand
+	end
+end
+
 function Poker:Start()
 	if self.GameStarted then
 		return
@@ -226,7 +275,7 @@ function Poker:Start()
 
 	self.GameStarted = true
 
-	self:PreFlop()
+	task.spawn(self.PreFlop, self)
 end
 
 function Poker:PreFlop()
@@ -236,16 +285,27 @@ function Poker:PreFlop()
 		return
 	end
 
+	for _, player in self.Players do
+		for i = 1,2 do
+			table.insert(player.Hand, self.Deck:Draw())
+		end
+	end
+
 	self.Round = "Pre-Flop"
 
 	self.BigBlindPlayer.Chips -= self.Ante
 	self.SmallBlindPlayer.Chips -= math.round(self.Ante / 2)
-	self.Pot += self.Ante
+	self.Pot += self.Ante * 1.5
 
 	self:GameEvent("PreFlopStart")
 
-	self:GetPlayerDecisions()
-	self:Flop()
+	self:ResetBets()
+	local success = self:GetPlayerDecisions()
+	if not success then
+		task.spawn(self.Showdown, self)
+		return
+	end
+	task.spawn(self.Flop, self)
 end
 
 function Poker:Flop()
@@ -261,9 +321,15 @@ function Poker:Flop()
 
 	self.Round = "Flop"
 
+	self:UpdateBestHands()
+	self:ResetBets()
 	self:GameEvent("Flop", self.Table)
-	self:GetPlayerDecisions()
-	self:Turn()
+	local success = self:GetPlayerDecisions()
+	if not success then
+		task.spawn(self.Showdown, self)
+		return
+	end
+	task.spawn(self.Turn, self)
 end
 
 function Poker:Turn()
@@ -275,9 +341,16 @@ function Poker:Turn()
 	self.Round = "Turn"
 
 	table.insert(self.Table, self.Deck:Draw())
+	self:UpdateBestHands()
+	self:ResetBets()
+
 	self:GameEvent("Turn", self.Table)
-	self:GetPlayerDecisions()
-	self:River()
+	local success = self:GetPlayerDecisions()
+	if not success then
+		task.spawn(self.Showdown, self)
+		return
+	end
+	task.spawn(self.River, self)
 end
 
 function Poker:River()
@@ -290,21 +363,69 @@ function Poker:River()
 	self.Round = "River"
 
 	table.insert(self.Table, self.Deck:Draw())
+	self:UpdateBestHands()
+	self:ResetBets()
 	self:GameEvent("River", self.Table)
-	self:GetPlayerDecisions()
-	self:Showdown()
+	local success = self:GetPlayerDecisions()
+	task.spawn(self.Showdown, self)
+end
+
+function Poker:DetermineWinner()
+	local bestValue = 0
+	local winners = {}
+
+	for _, player in self.Players do
+		if player.State ~= "Folded" then
+			local value, _ = Poker.GetValueForHand(player.Hand, self.Table)
+			if value > bestValue then
+				bestValue = value
+				winners = {player}
+			elseif value == bestValue then
+				table.insert(winners, player)
+			end
+		end
+	end
+
+	return winners
 end
 
 function Poker:Showdown()
-	local self = self :: PokerGame
-	if not self.GameStarted then
-		warn("Game not started")
-		return
+	self.Round = "Showdown"
+	self:UpdateBestHands()
+
+	local winners = self:DetermineWinner()
+	local splitPot = math.floor(self.Pot / #winners)
+
+	for _, winner in winners do
+		winner.Chips += splitPot
+		self:GameEvent("PlayerWon", winner.Player, splitPot)
 	end
 
-	self.Round = "Showdown"
+	self:GameEvent("Showdown", winners)
+	task.spawn(self.End, self)
+end
 
-	self:GameEvent("Showdown")
+function Poker:Restart()
+	self = self :: PokerGame
+	self:ResetBets()
+	self.Dealer = self:GetNextPlayer()
+	self.CurrentPlayer = self.Dealer
+
+	table.move(self.Table, 1, #self.Table, #self.Deck.Cards + 1, self.Deck.Cards)
+	table.clear(self.Table)
+
+	for _, player in self.Players do
+		table.move(player.Hand, 1, #player.Hand, #self.Deck.Cards + 1, self.Deck.Cards)
+		table.clear(player.Hand)
+
+		player.State = "Active"
+		player.BestHand = ""
+	end
+
+	self.Deck:Shuffle()
+	self.Pot = 0
+
+	task.spawn(self.PreFlop, self)
 end
 
 function Poker:End()
@@ -313,26 +434,42 @@ function Poker:End()
 	self.Round = "End"
 
 	self:GameEvent("End")
+	task.spawn(self.Restart, self)
 end
 
 function Poker:GetNextPlayer()
-	for i = 1, #self.Players do
-		if self.Players[i] == self.CurrentPlayer then
-			return self.Players[(i % #self.Players) + 1]
-		end
-	end
+	local index = table.find(self.Players, self.CurrentPlayer)
+	if not index then return nil end
+
+	local start = index
+	repeat
+		index = (index % #self.Players) + 1
+		local nextPlayer = self.Players[index]
+
+		return nextPlayer
+	until index == start
 
 	return nil
 end
 
 function Poker:GetPreviousPlayer(player: PokerPlayer)
 	local index = table.find(self.Players, player)
-	local previousPlayer = self.Players[index - 1] or self.Players[#self.Players]
-	while previousPlayer and previousPlayer.State == "Folded" do
-		index = index - 1
-		previousPlayer = self.Players[index - 1] or self.Players[#self.Players]
-	end
-	return previousPlayer
+	if not index then return nil end
+
+	local startIndex = index
+	repeat
+		index -= 1
+		if index < 1 then
+			index = #self.Players
+		end
+
+		local previousPlayer = self.Players[index]
+		if previousPlayer.State ~= "Folded" then
+			return previousPlayer
+		end
+	until index == startIndex
+
+	return nil
 end
 
 function Poker:Fold(player: PokerPlayer)
@@ -345,72 +482,83 @@ function Poker:Fold(player: PokerPlayer)
 end
 
 function Poker:Bet(player: PokerPlayer, amount: number)
-	self = self :: PokerGame
-	if player.State ~= "Active" then
-		return
-	end
+	if player.State ~= "Active" then return end
 
 	if self.Round == "Pre-Flop" and self.SmallBlindPlayer == player and amount < math.round(self.Ante / 2) then
 		amount = math.round(self.Ante / 2)
 	end
 
 	if player.Chips < amount then
-		Poker:AllIn(player)
+		self:AllIn(player)
 		return
 	end
 
 	local previousPlayer = self:GetPreviousPlayer(player)
+	local previousBet = previousPlayer and previousPlayer.Bet or 0
 
-	if previousPlayer.Bet > amount then
-		Poker:Raise(player, previousPlayer.Bet - amount)
+	if amount < previousBet then
+		local raiseAmount = previousBet - amount
+		if raiseAmount > 0 then
+			self:Raise(player, raiseAmount)
+		else
+			self:Call(player)
+		end
 		return
 	end
 
 	self.Pot += amount
 	player.Chips -= amount
 	player.Bet += amount
-
 	player.State = "Betting"
+
 	self:GameEvent("PlayerBet", player.Player, amount)
 end
 
 function Poker:Call(player: PokerPlayer)
-	self = self :: PokerGame
-	if player.State ~= "Active" then
-		return
-	end
+	if player.State ~= "Active" then return end
 
 	local previousPlayer = self:GetPreviousPlayer(player)
-
-	if previousPlayer.Bet > player.Chips then
-		Poker:AllIn(player)
+	if not previousPlayer or previousPlayer.Bet == 0 then
+		self:Check(player)
 		return
 	end
 
-	player.Bet = previousPlayer.Bet
-	self.Pot += player.Bet
-	player.Chips -= player.Bet
+	local toCall = previousPlayer.Bet - player.Bet
+	if toCall <= 0 then
+		self:Check(player)
+		return
+	end
+
+	if player.Chips <= toCall then
+		self:AllIn(player)
+		return
+	end
+
+	player.Chips -= toCall
+	player.Bet += toCall
+	self.Pot += toCall
 	player.State = "Called"
-	
+
 	self:GameEvent("PlayerCalled", player.Player)
 end
 
 function Poker:Raise(player: PokerPlayer, amount: number)
-	self = self :: PokerGame
-	if player.State ~= "Active" then
-		return
-	end
-	
+	if player.State ~= "Active" then return end
+
 	local previousPlayer = self:GetPreviousPlayer(player)
+	local previousBet = previousPlayer and previousPlayer.Bet or 0
 
-	if player.Chips < previousPlayer.Bet + amount then
-		Poker:AllIn(player)
+	local toCall = previousBet - player.Bet
+	local totalAmount = toCall + amount
+
+	if player.Chips < totalAmount then
+		self:AllIn(player)
 		return
 	end
 
-	self.Pot += previousPlayer.Bet + amount
-	player.Chips -= previousPlayer.Bet + amount
-	player.Bet += previousPlayer.Bet + amount
+	player.Chips -= totalAmount
+	player.Bet += totalAmount
+	self.Pot += totalAmount
 	player.State = "Raised"
 
 	self:GameEvent("PlayerRaised", player.Player, amount)
@@ -484,10 +632,132 @@ function Poker:GetPlayer(player: Player)
 	return nil
 end
 
+function Poker:IsBettingRoundComplete()
+	local activePlayers = {}
+	local highestBet = 0
+
+	for _, player in self.Players do
+		if player.State == "Active" or player.State == "Called" or player.State == "Checked" or player.State == "All-In" then
+			table.insert(activePlayers, player)
+			if player.Bet > highestBet then
+				highestBet = player.Bet
+			end
+		end
+	end
+
+	for _, player in activePlayers do
+		if player.State ~= "All-In" and player.Bet < highestBet then
+			return false
+		end
+	end
+
+	return true
+end
+
+function Poker:ResetBets()
+	for _, player in self.Players do
+		player.Bet = 0
+		if player.State ~= "Folded" and player.State ~= "All-In" then
+			player.State = "Active"
+		end
+	end
+end
+
+function Poker:GetAIBetAmount(player: PokerPlayer, handValue: number, personality)
+	local rand = Random.new()
+	local base = handValue * 10
+	local variance = rand:NextInteger(-5, 15)
+	local potFactor = math.clamp(self.Pot * 0.2, 10, 100)
+	local betAmount = math.clamp((base + variance) * personality.RaiseAggression + potFactor, 10, player.Chips)
+	betAmount = math.max(1, math.floor(betAmount))
+	return betAmount
+end
+
+function Poker:GetAIDecision(player: PokerPlayer, decisions: {[PokerPlayer]: {Action: string, Args: {any}}})
+	local rand = Random.new()
+	local personality = Poker.Personalities[player.Personality or "Balanced"]
+
+	local handValue = Poker.GetValueForHand(player.Hand, self.Table)
+	local tableValue = 0
+	if #self.Table > 0 then
+		tableValue = Poker.GetValueForHand({}, self.Table)
+	end
+	local previousPlayer = self:GetPreviousPlayer(player)
+	local previousBet = previousPlayer and previousPlayer.Bet or 0
+	local toCall = math.max(previousBet - player.Bet, 0)
+	local chips = player.Chips
+
+	local memory = player.Memory or {SeenRaises = 0, SeenFolds = 0}
+	player.Memory = memory
+
+	local raises, allIns, calls = 0, 0, 0
+	for _, decision in pairs(decisions) do
+		if decision.Action == "Raise" then
+			raises += 1
+			memory.SeenRaises += 1
+		elseif decision.Action == "All-In" then
+			allIns += 1
+		elseif decision.Action == "Call" then
+			calls += 1
+		end
+	end
+
+	local isAggressive = raises > 0 or allIns > 0
+	local potOdds = toCall / math.max(self.Pot, 1)
+	local riskFactor = potOdds * (isAggressive and 1.5 or 1)
+
+	local bluffChance = 0
+	if handValue <= 3 then
+		bluffChance = ((1 - riskFactor) * 0.3 + (calls == 0 and raises == 0 and 0.2 or 0)) * personality.BluffMultiplier
+	elseif handValue <= 6 then
+		bluffChance = 0.05 * personality.BluffMultiplier
+	end
+
+	if rand:NextNumber() < bluffChance then
+		if toCall <= chips then
+			if rand:NextNumber() < 0.5 and chips > toCall + 15 then
+				local bluffRaise = math.min(chips - toCall, rand:NextInteger(15, 40))
+				return { Action = "Raise", Args = { bluffRaise } }
+			else
+				return { Action = "Call", Args = {} }
+			end
+		end
+	end
+
+	local isOutplayed = handValue <= tableValue
+
+	if toCall == 0 then
+		if handValue <= 3 or isOutplayed then
+			return { Action = "Check", Args = {} }
+		else
+			local bet = self:GetAIBetAmount(player, handValue, personality)
+			return { Action = "Bet", Args = { math.min(bet, chips) } }
+		end
+	end
+
+	if handValue >= 7 then
+		if chips <= toCall then
+			return { Action = "All-In", Args = {} }
+		else
+			local raiseAmount = self:GetAIBetAmount(player, handValue, personality)
+			return { Action = "Raise", Args = { math.min(raiseAmount, chips - toCall) } }
+		end
+	elseif handValue >= 4 and not isOutplayed then
+		if toCall <= chips * (0.25 * personality.RaiseAggression) then
+			return { Action = "Call", Args = {} }
+		end
+	end
+
+	if toCall <= chips * personality.FoldThreshold and not isOutplayed then
+		return { Action = "Call", Args = {} }
+	end
+
+	return { Action = "Fold", Args = {} }
+end
+
 function Poker:GetPlayerDecisions()
 	self = self :: PokerGame
 	local timeOut = 10
-	local startTime = os.time()
 	local decisions = {} :: {[PokerPlayer]: {Action: string, Args: {any}}}
 
 	local startingPlayer = self.CurrentPlayer
@@ -511,50 +781,75 @@ function Poker:GetPlayerDecisions()
 	end)
 
 	local function awaitDecision()
-		if self.CurrentPlayer.IsFake then
-			decisions[self.CurrentPlayer] = {Action = "Fold", Args = {}}
-		end
-		repeat task.wait() until decisions[self.CurrentPlayer] or (os.time() - startTime >= timeOut)
-		if not decisions[self.CurrentPlayer] then
-			decisions[self.CurrentPlayer] = {Action = "Fold", Args = {}}
-		end
-
-		local decision = decisions[self.CurrentPlayer]
-		if decision.Action == "Fold" then
-			self:Fold(self.CurrentPlayer)
-		elseif decision.Action == "Call" then
-			self:Call(self.CurrentPlayer)
-		elseif decision.Action == "Raise" then
-			self:Raise(self.CurrentPlayer, decision.Args[1])
-		elseif decision.Action == "Check" then
-			self:Check(self.CurrentPlayer)
-		elseif decision.Action == "All-In" then
-			self:AllIn(self.CurrentPlayer)
-		elseif decision.Action == "Bet" then
-			self:Bet(self.CurrentPlayer, decision.Args[1])
-		end
-
-		local nextPlayer = self:GetNextPlayer()
-		if nextPlayer == startingPlayer then
-			if not nextPlayer then
-				return
+		while true do
+			if not self.CurrentPlayer then break end
+	
+			if self.CurrentPlayer.State ~= "Active" then
+				local next = self:GetNextPlayer()
+				if not next or next == startingPlayer then
+					break
+				end
+				self.CurrentPlayer = next
+				continue
 			end
-
-			if self.CurrentPlayer.Bet <= nextPlayer.Bet then
-				return
+	
+			if self.CurrentPlayer.IsFake then
+				decisions[self.CurrentPlayer] = self:GetAIDecision(self.CurrentPlayer, decisions)
 			end
+	
+			local waited = 0
+			while not decisions[self.CurrentPlayer] and waited < timeOut do
+				local dt = task.wait()
+				waited += dt
+			end
+	
+			if not decisions[self.CurrentPlayer] then
+				decisions[self.CurrentPlayer] = {Action = "Fold", Args = {}}
+			end
+	
+			local decision = decisions[self.CurrentPlayer]
+			if decision.Action == "Fold" then
+				self:Fold(self.CurrentPlayer)
+			elseif decision.Action == "Call" then
+				self:Call(self.CurrentPlayer)
+			elseif decision.Action == "Raise" then
+				self:Raise(self.CurrentPlayer, decision.Args[1])
+			elseif decision.Action == "Check" then
+				self:Check(self.CurrentPlayer)
+			elseif decision.Action == "All-In" then
+				self:AllIn(self.CurrentPlayer)
+			elseif decision.Action == "Bet" then
+				self:Bet(self.CurrentPlayer, decision.Args[1])
+			end
+	
+			local nextPlayer = self:GetNextPlayer()
+			if not nextPlayer or nextPlayer == startingPlayer then
+				break
+			end
+	
+			self.CurrentPlayer = nextPlayer
 		end
-
-		self.CurrentPlayer = nextPlayer
-		awaitDecision()
 	end
 
 	awaitDecision()
 
+	connection:Disconnect()
+
+	local activePlayers = 0
+	local lastActivePlayer = nil
+
+	for _, player in self.Players do
+		if player.State ~= "Folded" then
+			activePlayers += 1
+			lastActivePlayer = player
+		end
+	end
+
+	if activePlayers == 1 and lastActivePlayer then
+		return false
+	end
+
 	return decisions
 end
-
-
-
 
 return Poker

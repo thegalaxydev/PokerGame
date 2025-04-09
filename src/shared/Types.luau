@@ -13,9 +13,16 @@ export type PokerPlayer = {
 	Player: Player,
 	Chips: number,
 	Hand: {Card},
+	BestHand: string,
 	State: "Active" | "Folded" | "All-In" | "Out" | "Called" | "Raised" | "Betting" | "Showdown" | "Checked",
 	Bet: number,
 	IsFake: boolean?,
+	Personality: string?,
+	Memory: {
+		LastResult: "Win" | "Loss" | nil,
+		SeenRaises: number,
+		SeenFolds: number,
+	}?,
 }
 
 export type PokerGameSettings = {
