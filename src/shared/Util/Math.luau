@@ -21,7 +21,7 @@ end
     in any direction and flips those orientations to be less than `math.pi`. This fixed rotation vector represents the same orientation
     as `vec`, except the difference between each respective component in `current` and `vec` is within +/- `math.pi`.
 
-    @return Vector3 -- A fixed rotation that represents the same orientation as `vec` but with the minimum distance from current in euler space.
+    @return Vector3 -- A fixed rotation that represents the same orientation as `vec` but with the minimum distance from `current` in euler space.
 ]=]
 function Util.FixVectorOrientation(current: Vector3, vec: Vector3): Vector3
     -- if math.abs(vec.X - current.X) > math.pi then if current.X < 0 then print("X1") else print("X2") end else end
