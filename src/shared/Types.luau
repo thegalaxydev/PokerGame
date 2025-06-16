@@ -9,6 +9,8 @@ export type Deck = {
 	Draw: (self: Deck) -> Card
 }
 
+export type GameEvent = "PreFlopStart" | "FlopStart" | "TurnStart" | "RiverStart" | "ShowdownStart" | "End" | "PlayerWon" | "PlayerFolded" | "PlayerAllIn" | "PlayerCalled" | "PlayerRaised" | "PlayerBet" | "PlayerChecked" | "PlayerShowdown" | "PlayerOut" | "PlayerCalled" | "PlayerRaised" | "PlayerBet" | "PlayerChecked" | "PlayerShowdown" | "PlayerOut"
+
 export type PokerPlayer = {
 	Player: Player,
 	Chips: number,
@@ -22,6 +24,13 @@ export type PokerPlayer = {
 		LastResult: "Win" | "Loss" | nil,
 		SeenRaises: number,
 		SeenFolds: number,
+		TiltFactor: number,
+		LostStreak: number,
+		Image: string,
+		LastAction: string,
+		BluffSuccess: number,
+		BluffFailure: number,
+		RiskBias: number,
 	}?,
 }
 
@@ -63,6 +72,7 @@ export type PokerGame = {
 	End: (self: PokerGame) -> (),
 
 	GetValueForHand: (hand: {Card}) -> number,
+	UpdateBestHands: (self: PokerGame) -> (),
 	CreateGame: (settings: PokerGameSettings) -> PokerGame,
 	GameEvent: (self: PokerGame, event: string, ...any) -> (),
 }
